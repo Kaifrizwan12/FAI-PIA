@@ -1,4 +1,4 @@
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Dimensions,
@@ -16,6 +16,8 @@ import { Camera, useCameraDevice, useCameraPermission } from 'react-native-visio
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AntDesign from 'react-native-vector-icons/AntDesign';
 import FaceDetection from '@react-native-ml-kit/face-detection';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { compareFaces, isFaceMatch } from '@/services/face-embedding';
 
 import { Colors, Fonts } from '@/constants/theme';
 import { getHeight, getWidth } from '@/hooks/use-responsive-sizing';
@@ -50,7 +52,18 @@ export default function AttendanceScreen() {
   const [message, setMessage] = useState('Align your face and tap capture');
   const [payload, setPayload] = useState<CapturePayload | null>(null);
   const [faceDetected, setFaceDetected] = useState(false);
+  const [faceRect, setFaceRect] = useState<any>(null);
   const [detecting, setDetecting] = useState(false);
+  const [comparing, setComparing] = useState(false);
+  const [isProfileDone, setIsProfileDone] = useState(false);
+
+  useEffect(() => {
+    const checkProfile = async () => {
+      const value = await AsyncStorage.getItem('profileSetupDone');
+      setIsProfileDone(value === 'true');
+    };
+    checkProfile();
+  }, []);
 
   const { location, errorMsg, isHaversineTrue } = useGeolocation();
 
@@ -100,9 +113,20 @@ export default function AttendanceScreen() {
         });
         if (faces.length > 0) {
           setFaceDetected(true);
+          const { frame } = faces[0];
+          const rect = {
+            x: Math.round(frame.left),
+            y: Math.round(frame.top),
+            width: Math.round(frame.width),
+            height: Math.round(frame.height),
+          };
+          setFaceRect(rect);
+          console.log('[AttendanceScreen] Face detected:', rect);
           setMessage('Face verified ✓');
         } else {
           setFaceDetected(false);
+          setFaceRect(null);
+          console.log('[AttendanceScreen] No face detected in capture');
           setMessage('No face detected — please retake');
         }
       } catch {
@@ -124,9 +148,64 @@ export default function AttendanceScreen() {
     setPayload(null);
     setCapturing(false);
     setFaceDetected(false);
+    setFaceRect(null);
     setDetecting(false);
+    setComparing(false);
     setMessage('Align your face and tap capture');
   }, []);
+
+  const confirmAttendance = useCallback(async () => {
+    console.log('[AttendanceScreen] confirmAttendance pressed. faceDetected:', faceDetected, 'payload:', !!payload);
+    if (!faceDetected || !payload) {
+      console.log('[AttendanceScreen] Cannot confirm: missing face or payload');
+      return;
+    }
+
+    setComparing(true);
+    setMessage('Comparing faces…');
+
+    try {
+      console.log('[AttendanceScreen] Loading profile from AsyncStorage...');
+      const profileData = await AsyncStorage.getItem('profile');
+      if (!profileData) {
+        console.log('[AttendanceScreen] Error: No profile found in storage');
+        setMessage('No profile found — set up your profile first');
+        setComparing(false);
+        return;
+      }
+
+      const profile = JSON.parse(profileData);
+      if (!profile.faceImage?.uri) {
+        console.log('[AttendanceScreen] Error: No faceImage found in profile');
+        setMessage('No profile photo found — update your profile');
+        setComparing(false);
+        return;
+      }
+
+      const profileRect = profile.faceRect || null;
+      console.log('[AttendanceScreen] Comparing captured face vs profile face...');
+      console.log('[AttendanceScreen] Captured URI:', payload.uri, 'Rect:', faceRect);
+      console.log('[AttendanceScreen] Profile URI:', profile.faceImage.uri, 'Rect:', profileRect);
+
+      // Run on-device face comparison via TFLite native module
+      const similarity = await compareFaces(
+        payload.uri,
+        faceRect,
+        profile.faceImage.uri,
+        profileRect
+      );
+      
+      const matched = isFaceMatch(similarity);
+      console.log('[AttendanceScreen] Comparison result similarity:', similarity, 'Matched:', matched);
+
+      navigation.replace('Status', { matched, similarity });
+    } catch (e: any) {
+      console.error('[AttendanceScreen] Face comparison error:', e);
+      setMessage('Face comparison failed — please retry');
+    } finally {
+      setComparing(false);
+    }
+  }, [faceDetected, navigation, payload, faceRect]);
 
   /* ---------- RENDER ---------- */
 
@@ -164,7 +243,13 @@ export default function AttendanceScreen() {
           <Ionicons name="arrow-back" size={Math.round(0.062 * getWidth())} color={Colors.light.text} />
         </Pressable>
         <Text style={styles.headerTitle}>Facial Check-In</Text>
-        <View style={styles.backBtn} />
+        {isProfileDone ? (
+          <Pressable style={styles.backBtn} onPress={() => navigation.navigate('Profile')}>
+            <Ionicons name="person-circle-outline" size={Math.round(0.072 * getWidth())} color={Colors.light.buttonBg} />
+          </Pressable>
+        ) : (
+          <View style={styles.backBtn} />
+        )}
       </View>
       <View style={isHaversineTrue ? styles.approvedLoc : styles.rejectedLoc}>
         <View
@@ -186,7 +271,10 @@ export default function AttendanceScreen() {
         <View style={styles.card}>
           {/* camera feed OR captured preview */}
           {payload ? (
-            <Image source={{ uri: payload.uri }} style={styles.cameraFeed} />
+            <Image 
+              source={{ uri: payload.uri }} 
+              style={[styles.cameraFeed, { transform: [{ scaleX: 1 }] }]} 
+            />
           ) : (
             <Camera
               ref={cameraRef}
@@ -265,8 +353,8 @@ export default function AttendanceScreen() {
           <ActivityIndicator size="small" color={Colors.light.buttonBg} style={{ marginTop: 16 }} />
         )}
 
-        {/* spinner while detecting face */}
-        {detecting && payload && (
+        {/* spinner while detecting face or comparing */}
+        {(detecting || comparing) && payload && (
           <ActivityIndicator size="small" color={Colors.light.buttonBg} style={{ marginTop: 16 }} />
         )}
 
@@ -280,13 +368,19 @@ export default function AttendanceScreen() {
             <Pressable
               style={[
                 styles.confirmBtn,
-                !faceDetected && styles.confirmBtnDisabled,
+                (!faceDetected || comparing) && styles.confirmBtnDisabled,
               ]}
-              onPress={() => faceDetected && navigation.replace('Status')}
-              disabled={!faceDetected}
+              onPress={confirmAttendance}
+              disabled={!faceDetected || comparing}
             >
-              <Ionicons name="checkmark-circle-outline" size={Math.round(0.051 * getWidth())} color="#fff" />
-              <Text style={styles.confirmTxt}>Confirm</Text>
+              {comparing ? (
+                <ActivityIndicator size="small" color="#fff" />
+              ) : (
+                <>
+                  <Ionicons name="checkmark-circle-outline" size={Math.round(0.051 * getWidth())} color="#fff" />
+                  <Text style={styles.confirmTxt}>Confirm</Text>
+                </>
+              )}
             </Pressable>
           </View>
         )}

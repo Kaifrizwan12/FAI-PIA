@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AntDesign from 'react-native-vector-icons/AntDesign';
 import EvilIcons from 'react-native-vector-icons/EvilIcons';
@@ -13,13 +14,35 @@ import type { RootStackParamList } from '../navigation/types';
 import OverlayIcon from '../../assets/svgs/Overlay-Border-Shadow.svg';
 import LottieView from 'lottie-react-native';
 
-// to create a strongly-typed navigation prop for the Home screen, we define a type Nav that uses NativeStackNavigationProp with our RootStackParamList and the 'Home' route. This allows us to have type safety when navigating from the Home screen.
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Home'>;
 
 export default function HomeScreen() {
-  // useNavigation hook is used to get the navigation object, and we specify that it should be of type Nav to ensure type safety when navigating to other screens.
   const navigation = useNavigation<Nav>();
   const colorScheme = 'light';
+  const [isProfileDone, setIsProfileDone] = useState(false);
+
+  useEffect(() => {
+    const checkProfile = async () => {
+      const value = await AsyncStorage.getItem('profileSetupDone');
+      setIsProfileDone(value === 'true');
+    };
+    checkProfile();
+    // Re-check when the screen comes into focus
+    const unsubscribe = navigation.addListener('focus', () => {
+      checkProfile();
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  // "Get Started" — if profile is done go to Attendance, else go to ProfileSetup
+  const handleGetStarted = useCallback(async () => {
+    const value = await AsyncStorage.getItem('profileSetupDone');
+    if (value === 'true') {
+      navigation.navigate('Attendance');
+    } else {
+      navigation.navigate('ProfileSetup');
+    }
+  }, [navigation]);
 
   return (
     <View
@@ -28,6 +51,22 @@ export default function HomeScreen() {
         { backgroundColor: Colors[colorScheme].background },
       ]}
     >
+      {/* Profile icon in top-right (only if profile exists) */}
+      {isProfileDone && (
+        <Pressable
+          style={styles.profileIconBtn}
+          onPress={() => navigation.navigate('Profile')}
+        >
+          <View style={styles.profileIconCircle}>
+            <Ionicons
+              name="person"
+              size={Math.round(0.045 * getWidth())}
+              color={Colors.light.buttonBg}
+            />
+          </View>
+        </Pressable>
+      )}
+
       <OverlayIcon width={0.167 * getWidth()} height={0.167 * getWidth()} style={styles.personImage} />
       <Text style={[styles.title, { color: Colors[colorScheme].text }]}>
         Smart Attendance
@@ -63,7 +102,7 @@ export default function HomeScreen() {
       </View>
       <Pressable
         style={styles.button}
-        onPress={() => navigation.navigate('Attendance')}
+        onPress={handleGetStarted}
       >
         <Text style={styles.buttonText}>Get Started</Text>
         <AntDesign name="arrowright" size={Math.round(0.046 * getWidth())} color="white" />
@@ -88,6 +127,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     width: '100%',
+    alignItems: 'center',
+  },
+  profileIconBtn: {
+    position: 'absolute',
+    top: 0.05 * getHeight(),
+    right: 0.051 * getWidth(),
+    zIndex: 10,
+  },
+  profileIconCircle: {
+    width: 0.1 * getWidth(),
+    height: 0.1 * getWidth(),
+    borderRadius: 0.05 * getWidth(),
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1.5,
+    borderColor: '#2463eb31',
+    justifyContent: 'center',
     alignItems: 'center',
   },
   titleSec2: {
@@ -120,7 +175,6 @@ const styles = StyleSheet.create({
     height: 0.167 * getWidth(),
     marginTop: 0.07 * getHeight(),
     marginBottom: 0.019 * getHeight(),
-    
   },
   title: {
     fontSize: 0.06 * getWidth(),
@@ -128,9 +182,7 @@ const styles = StyleSheet.create({
     fontFamily: Fonts.sans,
   },
   mainImage: {
-    // height: 0.4 * getHeight(),
     marginTop: 0.07 * getHeight(),
-    // width: '100%',
   },
   statusRow: {
     flexDirection: 'row',

@@ -1,11 +1,13 @@
 export type RootStackParamList = {
-  Home: undefined; // no parameters expected for Home screen
-  Attendance: undefined; // no parameters expected for Attendance screen
-  Status: undefined;  // no parameters expected for Status screen
+  Home: undefined;
+  Attendance: undefined;
+  Status: { matched: boolean; similarity: number };
+  ProfileSetup: undefined;
+  Profile: undefined;
 };
 
 declare global {
   namespace ReactNavigation {
-    interface RootParamList extends RootStackParamList {}
+    interface RootParamList extends RootStackParamList { }
   }
 }

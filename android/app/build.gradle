@@ -114,9 +114,17 @@ dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
+    // TensorFlow Lite for on-device face embedding inference
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")
     } else {
         implementation jscFlavor
     }
+}
+
+// Prevent compression of the TFLite model in the APK
+android.aaptOptions {
+    noCompress "tflite"
 }
