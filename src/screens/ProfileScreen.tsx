@@ -16,7 +16,7 @@ type ProfileData = {
   department: string;
   position: string;
   joinDate: string;
-  faceImage: { uri: string } | null;
+  faceImage: { uri: string, isCamera?: boolean } | null;
   faceRect: { x: number; y: number; width: number; height: number } | null;
 };
 
@@ -49,7 +49,7 @@ export default function ProfileScreen() {
             includeBase64: false,
           });
           if (!result.didCancel && result.assets && result.assets.length > 0) {
-            updateProfileImage(result.assets[0]);
+            updateProfileImage({ ...result.assets[0], isCamera: true });
           }
         },
       },
@@ -63,7 +63,7 @@ export default function ProfileScreen() {
             includeBase64: false,
           });
           if (!result.didCancel && result.assets && result.assets.length > 0) {
-            updateProfileImage(result.assets[0]);
+            updateProfileImage({ ...result.assets[0], isCamera: false });
           }
         },
       },
@@ -138,7 +138,7 @@ export default function ProfileScreen() {
           {profile.faceImage ? (
             <Image
               source={{ uri: profile.faceImage.uri }}
-              style={[styles.avatar, { transform: [{ scaleX: 1 }] }]}
+              style={[styles.avatar, { transform: [{ scaleX: profile.faceImage.isCamera ? -1 : 1 }] }]}
             />
           ) : (
             <View style={styles.avatarPlaceholder}>

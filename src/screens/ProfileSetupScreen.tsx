@@ -59,7 +59,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
       includeBase64: false,
     });
     if (!result.didCancel && result.assets && result.assets.length > 0) {
-      processSelectedImage(result.assets[0]);
+      processSelectedImage({ ...result.assets[0], isCamera: false });
     }
   };
 
@@ -72,7 +72,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
       includeBase64: false,
     });
     if (!result.didCancel && result.assets && result.assets.length > 0) {
-      processSelectedImage(result.assets[0]);
+      processSelectedImage({ ...result.assets[0], isCamera: true });
     }
   };
 
@@ -252,8 +252,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
                 source={{ uri: faceImage.uri }}
                 style={[
                   styles.faceImage,
-                  // Ensure no mirroring - standard orientation
-                  { transform: [{ scaleX: 1 }] },
+                  { transform: [{ scaleX: faceImage.isCamera ? -1 : 1 }] },
                 ]}
               />
             ) : (

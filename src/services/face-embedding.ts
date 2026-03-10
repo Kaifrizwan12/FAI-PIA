@@ -13,7 +13,7 @@ export type Rect = {
  * Cosine similarity threshold for face match.
  * Values above this are considered a match.
  */
-export const SIMILARITY_THRESHOLD = 0.6;
+export const SIMILARITY_THRESHOLD = 0.85;
 
 /**
  * Get a 128-dimensional face embedding from an image URI with optional cropping box.
