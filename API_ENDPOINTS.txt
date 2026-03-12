@@ -1,0 +1,622 @@
+================================================================================
+  FACIAL RECOGNITION API — ENDPOINT DOCUMENTATION
+  For React Native Integration
+================================================================================
+
+BASE URL:  http://localhost:5063
+           https://localhost:7147
+
+All responses use camelCase JSON. Null fields are omitted from responses.
+Content-Type for JSON endpoints: application/json
+Rate Limit: 100 requests per minute per IP (HTTP 429 if exceeded).
+Health Check: GET /health
+
+
+================================================================================
+1. REGISTER EMPLOYEE
+================================================================================
+
+POST /api/employees
+
+Description:
+  Register a new employee with their face image for recognition.
+
+Content-Type: multipart/form-data
+
+Request Body (form-data fields):
+  ┌──────────┬──────────┬──────────┬─────────────────────────────────────────┐
+  │ Field    │ Type     │ Required │ Notes                                   │
+  ├──────────┼──────────┼──────────┼─────────────────────────────────────────┤
+  │ fullName │ string   │ Yes      │ Max 255 characters                      │
+  │ email    │ string   │ Yes      │ Valid email, max 255 characters         │
+  │ phone    │ string   │ Yes      │ Max 30 characters                       │
+  │ department│ string  │ Yes      │ Max 100 characters                      │
+  │ position │ string   │ Yes      │ Max 100 characters                      │
+  │ joinDate │ string   │ Yes      │ Format: "YYYY-MM-DD" (e.g. "2026-03-12")│
+  │ faceImage│ file     │ Yes      │ Image file of the employee's face       │
+  └──────────┴──────────┴──────────┴─────────────────────────────────────────┘
+
+React Native Example (using FormData):
+  const formData = new FormData();
+  formData.append('fullName', 'John Doe');
+  formData.append('email', 'john@example.com');
+  formData.append('phone', '+1234567890');
+  formData.append('department', 'Engineering');
+  formData.append('position', 'Software Engineer');
+  formData.append('joinDate', '2026-03-12');
+  formData.append('faceImage', {
+    uri: imageUri,
+    type: 'image/jpeg',
+    name: 'face.jpg',
+  });
+
+  fetch(`${BASE_URL}/api/employees`, {
+    method: 'POST',
+    body: formData,
+    // Do NOT set Content-Type header manually; let fetch set it with boundary
+  });
+
+Success Response (201 Created):
+  {
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "fullName": "John Doe",
+    "email": "john@example.com",
+    "phone": "+1234567890",
+    "department": "Engineering",
+    "position": "Software Engineer",
+    "joinDate": "2026-03-12",
+    "createdAt": "2026-03-12T10:30:00Z"
+  }
+
+Error Response (400 Bad Request):
+  { "message": "The FullName field is required." }
+  { "message": "joinDate must be in YYYY-MM-DD format." }
+
+Error Response (409 Conflict):
+  { "message": "..." }  (e.g. duplicate email)
+
+
+================================================================================
+2. MARK ATTENDANCE
+================================================================================
+
+POST /api/attendance
+
+Description:
+  Record attendance for an employee after on-device face recognition succeeds.
+  Call this after face match is confirmed on the device.
+
+Content-Type: application/json
+
+Request Body:
+  {
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890"   // (required) Employee UUID
+  }
+
+Success Response (201 Created):
+  {
+    "attendanceId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+    "markedAt": "2026-03-12T08:30:00Z",
+    "status": "present"
+  }
+
+Error Response (400 Bad Request):
+  { "message": "The Uuid field is required." }
+
+Error Response (404 Not Found):
+  { "message": "..." }
+
+
+================================================================================
+3. GET DAILY ATTENDANCE
+================================================================================
+
+GET /api/attendance?date=YYYY-MM-DD
+
+Description:
+  Get attendance records for a specific date. Defaults to today (UTC) if
+  the date query parameter is omitted.
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ date  │ string │ No       │ Format: "YYYY-MM-DD". Defaults to today.   │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "date": "2026-03-12",
+    "count": 2,
+    "records": [
+      {
+        "attendanceId": "f47ac10b-...",
+        "uuid": "a1b2c3d4-...",
+        "fullName": "John Doe",
+        "email": "john@example.com",
+        "department": "Engineering",
+        "position": "Software Engineer",
+        "markedAt": "2026-03-12T08:30:00Z",
+        "status": "present"
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "date must be in YYYY-MM-DD format." }
+
+
+================================================================================
+4. DASHBOARD — GET SUMMARY
+================================================================================
+
+GET /api/dashboard/summary
+
+Description:
+  Dashboard overview with totals, today's attendance, and recent activity.
+
+Success Response (200 OK):
+  {
+    "totalEmployees": 50,
+    "todayPresentCount": 42,
+    "todayAbsentCount": 8,
+    "todayAttendanceRate": 84.0,
+    "newEmployeesThisMonth": 3,
+    "averageAttendanceRateLast30Days": 88.5,
+    "recentActivity": [
+      {
+        "employeeId": "a1b2c3d4-...",
+        "fullName": "John Doe",
+        "department": "Engineering",
+        "markedAt": "2026-03-12T08:30:00Z",
+        "status": "present"
+      }
+    ]
+  }
+
+
+================================================================================
+5. DASHBOARD — GET EMPLOYEES (Paginated)
+================================================================================
+
+GET /api/dashboard/employees?search=&department=&page=1&pageSize=20
+
+Description:
+  Paginated employee list with optional search and department filter.
+
+Query Parameters:
+  ┌────────────┬─────────┬──────────┬──────────────────────────────────────┐
+  │ Param      │ Type    │ Required │ Notes                                │
+  ├────────────┼─────────┼──────────┼──────────────────────────────────────┤
+  │ search     │ string  │ No       │ Search by name/email                 │
+  │ department │ string  │ No       │ Filter by department name            │
+  │ page       │ int     │ No       │ Default: 1. Min: 1                   │
+  │ pageSize   │ int     │ No       │ Default: 20. Min: 1, Max: 100       │
+  └────────────┴─────────┴──────────┴──────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "totalCount": 50,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 3,
+    "employees": [
+      {
+        "uuid": "a1b2c3d4-...",
+        "fullName": "John Doe",
+        "email": "john@example.com",
+        "phone": "+1234567890",
+        "department": "Engineering",
+        "position": "Software Engineer",
+        "joinDate": "2026-01-15",
+        "createdAt": "2026-01-15T10:00:00Z",
+        "totalAttendanceDays": 45,
+        "attendanceRate": 90.0,
+        "lastAttendanceDate": "2026-03-12"
+      }
+    ]
+  }
+
+
+================================================================================
+6. DASHBOARD — GET EMPLOYEE BY ID
+================================================================================
+
+GET /api/dashboard/employees/{id}
+
+Description:
+  Single employee detail with attendance stats.
+
+Path Parameters:
+  id — GUID of the employee (e.g. "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+
+Success Response (200 OK):
+  {
+    "uuid": "a1b2c3d4-...",
+    "fullName": "John Doe",
+    "email": "john@example.com",
+    "phone": "+1234567890",
+    "department": "Engineering",
+    "position": "Software Engineer",
+    "joinDate": "2026-01-15",
+    "createdAt": "2026-01-15T10:00:00Z",
+    "totalAttendanceDays": 45,
+    "attendanceRate": 90.0,
+    "lastAttendanceDate": "2026-03-12"
+  }
+
+Error Response (404):
+  { "message": "..." }
+
+
+================================================================================
+7. DASHBOARD — GET EMPLOYEES BY DEPARTMENT
+================================================================================
+
+GET /api/dashboard/employees/by-department
+
+Description:
+  Employees grouped by department with today's attendance counts.
+
+Success Response (200 OK):
+  {
+    "departments": [
+      {
+        "department": "Engineering",
+        "employeeCount": 15,
+        "averageAttendanceRate": 92.5,
+        "todayPresentCount": 13,
+        "todayAbsentCount": 2
+      }
+    ]
+  }
+
+
+================================================================================
+8. DASHBOARD — DELETE ATTENDANCE
+================================================================================
+
+DELETE /api/dashboard/attendance/{id}
+
+Description:
+  Delete an attendance record by its ID.
+
+Path Parameters:
+  id — GUID of the attendance record
+
+Success Response (204 No Content):
+  (empty body)
+
+Error Response (404):
+  { "message": "..." }
+
+
+================================================================================
+9. DASHBOARD — ATTENDANCE OVERVIEW
+================================================================================
+
+GET /api/dashboard/attendance/overview?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+Description:
+  Attendance overview for a date range: daily present/absent counts.
+  Defaults to last 7 days if not specified.
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ from  │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 6 days).  │
+  │ to    │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).    │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "fromDate": "2026-03-06",
+    "toDate": "2026-03-12",
+    "totalWorkingDays": 7,
+    "totalEmployees": 50,
+    "averageAttendanceRate": 88.5,
+    "dailySummaries": [
+      {
+        "date": "2026-03-06",
+        "presentCount": 44,
+        "absentCount": 6,
+        "attendanceRate": 88.0
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+10. DASHBOARD — MONTHLY ATTENDANCE
+================================================================================
+
+GET /api/dashboard/attendance/monthly?year=2026&month=3
+
+Description:
+  Monthly attendance report: per-employee present/absent for a given month.
+  Defaults to the current month/year if not specified.
+
+Query Parameters:
+  ┌───────┬──────┬──────────┬──────────────────────────────────────────────┐
+  │ Param │ Type │ Required │ Notes                                        │
+  ├───────┼──────┼──────────┼──────────────────────────────────────────────┤
+  │ year  │ int  │ No       │ Defaults to current year.                    │
+  │ month │ int  │ No       │ 1–12. Defaults to current month.             │
+  └───────┴──────┴──────────┴──────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "year": 2026,
+    "month": 3,
+    "totalWorkingDays": 22,
+    "totalEmployees": 50,
+    "averageAttendanceRate": 87.3,
+    "records": [
+      {
+        "employeeId": "a1b2c3d4-...",
+        "fullName": "John Doe",
+        "department": "Engineering",
+        "daysPresent": 20,
+        "daysAbsent": 2,
+        "attendanceRate": 90.9
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "month must be between 1 and 12." }
+
+
+================================================================================
+11. DASHBOARD — EMPLOYEE ATTENDANCE HISTORY
+================================================================================
+
+GET /api/dashboard/attendance/employee/{id}?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+Description:
+  Attendance history for a specific employee in a date range.
+  Defaults to last 30 days if not specified.
+
+Path Parameters:
+  id — GUID of the employee
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ from  │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 29 days). │
+  │ to    │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).    │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "employeeId": "a1b2c3d4-...",
+    "fullName": "John Doe",
+    "department": "Engineering",
+    "totalDaysPresent": 25,
+    "attendanceRate": 83.3,
+    "history": [
+      {
+        "date": "2026-03-12",
+        "markedAt": "2026-03-12T08:30:00Z",
+        "status": "present"
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+12. ANALYTICS — ATTENDANCE TREND
+================================================================================
+
+GET /api/dashboard/analytics/attendance-trend?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+Description:
+  Attendance trend data points for charts. Defaults to last 30 days.
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ from  │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 29 days). │
+  │ to    │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).    │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "fromDate": "2026-02-11",
+    "toDate": "2026-03-12",
+    "dataPoints": [
+      {
+        "date": "2026-02-11",
+        "presentCount": 40,
+        "totalEmployees": 50,
+        "attendanceRate": 80.0
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+13. ANALYTICS — DEPARTMENT STATS
+================================================================================
+
+GET /api/dashboard/analytics/department-stats?from=YYYY-MM-DD&to=YYYY-MM-DD
+
+Description:
+  Department-wise attendance analytics. Defaults to last 30 days.
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ from  │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 29 days). │
+  │ to    │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).    │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "departments": [
+      {
+        "department": "Engineering",
+        "employeeCount": 15,
+        "averageAttendanceRate": 92.5,
+        "todayPresentCount": 13,
+        "todayAbsentCount": 2
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+14. ANALYTICS — TOP ATTENDEES
+================================================================================
+
+GET /api/dashboard/analytics/top-attendees?from=YYYY-MM-DD&to=YYYY-MM-DD&count=10
+
+Description:
+  Top attendees ranked by attendance rate. Defaults to last 30 days, top 10.
+
+Query Parameters:
+  ┌───────┬────────┬──────────┬────────────────────────────────────────────┐
+  │ Param │ Type   │ Required │ Notes                                      │
+  ├───────┼────────┼──────────┼────────────────────────────────────────────┤
+  │ from  │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 29 days). │
+  │ to    │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).    │
+  │ count │ int    │ No       │ Default: 10. Min: 1, Max: 100             │
+  └───────┴────────┴──────────┴────────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "fromDate": "2026-02-11",
+    "toDate": "2026-03-12",
+    "rankings": [
+      {
+        "rank": 1,
+        "employeeId": "a1b2c3d4-...",
+        "fullName": "John Doe",
+        "department": "Engineering",
+        "daysPresent": 30,
+        "totalWorkingDays": 30,
+        "attendanceRate": 100.0
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+15. ANALYTICS — LOW ATTENDEES
+================================================================================
+
+GET /api/dashboard/analytics/low-attendees?from=YYYY-MM-DD&to=YYYY-MM-DD&threshold=75
+
+Description:
+  Employees with attendance rate below a threshold.
+  Defaults to last 30 days, threshold 75%.
+
+Query Parameters:
+  ┌───────────┬────────┬──────────┬──────────────────────────────────────────┐
+  │ Param     │ Type   │ Required │ Notes                                    │
+  ├───────────┼────────┼──────────┼──────────────────────────────────────────┤
+  │ from      │ string │ No       │ "YYYY-MM-DD". Defaults to (to - 29 days)│
+  │ to        │ string │ No       │ "YYYY-MM-DD". Defaults to today (UTC).  │
+  │ threshold │ double │ No       │ Default: 75. Range: 0–100               │
+  └───────────┴────────┴──────────┴──────────────────────────────────────────┘
+
+Success Response (200 OK):
+  {
+    "fromDate": "2026-02-11",
+    "toDate": "2026-03-12",
+    "threshold": 75.0,
+    "employees": [
+      {
+        "rank": 1,
+        "employeeId": "a1b2c3d4-...",
+        "fullName": "Jane Smith",
+        "department": "Marketing",
+        "daysPresent": 15,
+        "totalWorkingDays": 30,
+        "attendanceRate": 50.0
+      }
+    ]
+  }
+
+Error Response (400):
+  { "message": "'from' must be before or equal to 'to'." }
+
+
+================================================================================
+  COMMON ERROR FORMAT
+================================================================================
+
+All errors return JSON with a "message" field:
+
+  { "message": "Description of the error." }
+
+Common HTTP Status Codes:
+  200  OK               — Successful GET
+  201  Created           — Successful POST (resource created)
+  204  No Content        — Successful DELETE
+  400  Bad Request       — Validation error / bad input
+  404  Not Found         — Resource not found
+  409  Conflict          — Duplicate / conflict (e.g. duplicate attendance)
+  429  Too Many Requests — Rate limit exceeded
+  500  Internal Server Error — Unexpected server error
+
+
+================================================================================
+  QUICK REFERENCE TABLE
+================================================================================
+
+  METHOD  │ ENDPOINT                                       │ CONTENT-TYPE
+  ────────┼────────────────────────────────────────────────┼─────────────────
+  POST    │ /api/employees                                 │ multipart/form-data
+  POST    │ /api/attendance                                │ application/json
+  GET     │ /api/attendance?date=                          │ —
+  GET     │ /api/dashboard/summary                         │ —
+  GET     │ /api/dashboard/employees?search=&department=&page=&pageSize= │ —
+  GET     │ /api/dashboard/employees/{id}                  │ —
+  GET     │ /api/dashboard/employees/by-department         │ —
+  DELETE  │ /api/dashboard/attendance/{id}                  │ —
+  GET     │ /api/dashboard/attendance/overview?from=&to=   │ —
+  GET     │ /api/dashboard/attendance/monthly?year=&month= │ —
+  GET     │ /api/dashboard/attendance/employee/{id}?from=&to= │ —
+  GET     │ /api/dashboard/analytics/attendance-trend?from=&to= │ —
+  GET     │ /api/dashboard/analytics/department-stats?from=&to= │ —
+  GET     │ /api/dashboard/analytics/top-attendees?from=&to=&count= │ —
+  GET     │ /api/dashboard/analytics/low-attendees?from=&to=&threshold= │ —
+  GET     │ /health                                        │ —
+
+================================================================================
+  NOTES FOR REACT NATIVE
+================================================================================
+
+1. All date strings in query params and request bodies use "YYYY-MM-DD" format.
+2. All datetime strings in responses are ISO 8601 UTC (e.g. "2026-03-12T08:30:00Z").
+3. All JSON responses use camelCase property names.
+4. Null/empty fields are omitted from JSON responses.
+5. For the employee registration endpoint, use FormData and do NOT manually
+   set the Content-Type header — let fetch/axios set it automatically so
+   the multipart boundary is included.
+6. UUIDs are standard GUIDs (e.g. "a1b2c3d4-e5f6-7890-abcd-ef1234567890").
+7. The "uuid" returned from employee registration is the same ID used
+   everywhere else (attendance marking, dashboard lookups, etc.).
+
+================================================================================

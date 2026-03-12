@@ -10,7 +10,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Camera, useCameraDevice, useCameraPermission } from 'react-native-vision-camera';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -23,6 +23,22 @@ import { Colors, Fonts } from '@/constants/theme';
 import { getHeight, getWidth } from '@/hooks/use-responsive-sizing';
 import { useGeolocation } from '@/hooks/use-geolocation';
 import type { RootStackParamList } from '../navigation/types';
+
+// ─── Time-window helpers ──────────────────────────────────────────────────────
+/** Returns today's date as 'YYYY-MM-DD' in local time */
+function todayString(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+/** Returns true if current local hour is 9–16 (inclusive = 9:00 AM – 4:59 PM) */
+function isWithinWindow(): boolean {
+  const hour = new Date().getHours();
+  return hour >= 9 && hour < 17; // 09:00 – 16:59
+}
 
 const { width } = Dimensions.get('window');
 const CARD_WIDTH = width * 0.82;
@@ -57,12 +73,31 @@ export default function AttendanceScreen() {
   const [comparing, setComparing] = useState(false);
   const [isProfileDone, setIsProfileDone] = useState(false);
 
+  // ── Gate states ─────────────────────────────────────────────────────────────
+  /** True if current time is between 09:00–16:59 local */
+  const [withinWindow, setWithinWindow] = useState(isWithinWindow());
+  /** True if the user has already checked in today */
+  const [alreadyCheckedIn, setAlreadyCheckedIn] = useState(false);
+
+  // ── Check profile ────────────────────────────────────────────────────────────
+  useFocusEffect(
+    useCallback(() => {
+      const init = async () => {
+        const profileDone = await AsyncStorage.getItem('profileSetupDone');
+        setIsProfileDone(profileDone === 'true');
+
+        // One-time attendance guard: compare stored date with today
+        const storedDate = await AsyncStorage.getItem('attendanceDate');
+        setAlreadyCheckedIn(storedDate === todayString());
+      };
+      init();
+    }, []),
+  );
+
+  // ── Live time-window refresh (every 60 s) ─────────────────────────────────
   useEffect(() => {
-    const checkProfile = async () => {
-      const value = await AsyncStorage.getItem('profileSetupDone');
-      setIsProfileDone(value === 'true');
-    };
-    checkProfile();
+    const id = setInterval(() => setWithinWindow(isWithinWindow()), 60_000);
+    return () => clearInterval(id);
   }, []);
 
   const { location, errorMsg, isHaversineTrue } = useGeolocation();
@@ -235,6 +270,43 @@ export default function AttendanceScreen() {
     );
   }
 
+  // ── Gate: Already checked in today ─────────────────────────────────────────
+  if (alreadyCheckedIn) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Pressable style={styles.backBtn} onPress={() => navigation.goBack()}>
+            <Ionicons name="arrow-back" size={Math.round(0.062 * getWidth())} color={Colors.light.text} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Facial Check-In</Text>
+          {isProfileDone ? (
+            <Pressable style={styles.backBtn} onPress={() => navigation.navigate('Profile')}>
+              <Ionicons name="person-circle-outline" size={Math.round(0.072 * getWidth())} color={Colors.light.buttonBg} />
+            </Pressable>
+          ) : (
+            <View style={styles.backBtn} />
+          )}
+        </View>
+        <View style={styles.center}>
+          <View style={styles.checkedInCircle}>
+            <Ionicons name="checkmark-circle" size={0.18 * getWidth()} color="#059668" />
+          </View>
+          <Text style={styles.checkedInTitle}>Already Checked In</Text>
+          <Text style={styles.checkedInSub}>
+            You have already marked attendance{`\n`}for today. See you tomorrow!
+          </Text>
+          <Pressable
+            style={[styles.markBtn, { marginTop: 0.04 * getHeight() }]}
+            onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Home' }] })}
+          >
+            <Ionicons name="home-outline" size={Math.round(0.051 * getWidth())} color={Colors.light.background} />
+            <Text style={styles.markBtnTxt}>Back to Home</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* header */}
@@ -340,8 +412,36 @@ export default function AttendanceScreen() {
 
       {/* bottom message + actions */}
       <View style={styles.bottom}>
-        {/* capture button */}
-        {!payload && !capturing && (
+        {/* Outside 9 AM–5 PM window */}
+        {!withinWindow && !payload && !capturing && (
+          <>
+            <View style={styles.windowBanner}>
+              <Ionicons name="time-outline" size={Math.round(0.051 * getWidth())} color="#92400E" />
+              <Text style={styles.windowBannerTxt}>Check-in available 9:00 AM – 5:00 PM only</Text>
+            </View>
+            <Pressable style={[styles.markBtn, styles.markBtnDisabled]} disabled>
+              <AntDesign name="camera" size={Math.round(0.051 * getWidth())} color="#fff" />
+              <Text style={styles.markBtnTxt}>Capture Attendance</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* Within window but location not verified */}
+        {withinWindow && !isHaversineTrue && !payload && !capturing && (
+          <>
+            <View style={[styles.windowBanner, styles.windowBannerLoc]}>
+              <Ionicons name="location-outline" size={Math.round(0.051 * getWidth())} color="#991B1B" />
+              <Text style={[styles.windowBannerTxt, { color: '#991B1B' }]}>Must be within office premises to check in</Text>
+            </View>
+            <Pressable style={[styles.markBtn, styles.markBtnDisabled]} disabled>
+              <AntDesign name="camera" size={Math.round(0.051 * getWidth())} color="#fff" />
+              <Text style={styles.markBtnTxt}>Capture Attendance</Text>
+            </Pressable>
+          </>
+        )}
+
+        {/* Ready to capture */}
+        {withinWindow && isHaversineTrue && !payload && !capturing && (
           <Pressable style={styles.markBtn} onPress={() => void capture()}>
             <AntDesign name="camera" size={Math.round(0.051 * getWidth())} color={Colors.light.background} />
             <Text style={styles.markBtnTxt}>Capture Attendance</Text>
@@ -403,6 +503,52 @@ const styles = StyleSheet.create({
     tintColor: '#fff',
   },
   container: { flex: 1, backgroundColor: Colors.light.background },
+  // ── Already Checked-In screen ──────────────────────────────────────────────
+  checkedInCircle: {
+    marginBottom: 0.02 * getHeight(),
+  },
+  checkedInTitle: {
+    fontSize: 0.056 * getWidth(),
+    fontWeight: '700',
+    color: Colors.light.text,
+    fontFamily: Fonts.sans,
+    textAlign: 'center',
+  },
+  checkedInSub: {
+    fontSize: 0.036 * getWidth(),
+    color: Colors.light.backButton ?? '#64748B',
+    fontFamily: Fonts.sans,
+    textAlign: 'center',
+    marginTop: 0.01 * getHeight(),
+    lineHeight: 0.024 * getHeight(),
+  },
+  // ── Window / location banners ─────────────────────────────────────────────
+  windowBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    paddingHorizontal: 0.041 * getWidth(),
+    paddingVertical: 0.012 * getHeight(),
+    marginBottom: 0.015 * getHeight(),
+    width: CARD_WIDTH,
+  },
+  windowBannerLoc: {
+    backgroundColor: '#FEE2E2',
+  },
+  windowBannerTxt: {
+    flex: 1,
+    fontSize: 0.032 * getWidth(),
+    fontWeight: '600',
+    color: '#92400E',
+    fontFamily: Fonts.sans,
+  },
+  markBtnDisabled: {
+    backgroundColor: '#94A3B8',
+    shadowOpacity: 0,
+    elevation: 0,
+  },
   header: {
     height: 0.09 * getHeight(),
     flexDirection: 'row',

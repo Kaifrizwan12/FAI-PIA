@@ -21,6 +21,7 @@ import FaceDetection from '@react-native-ml-kit/face-detection';
 
 import { Colors, Fonts } from '@/constants/theme';
 import { getHeight, getWidth } from '@/hooks/use-responsive-sizing';
+import { registerEmployee } from '@/services/api';
 
 export default function ProfileSetupScreen({ navigation }: any) {
   const [fullName, setFullName] = useState('');
@@ -118,48 +119,59 @@ export default function ProfileSetupScreen({ navigation }: any) {
     }
     setLoading(true);
     try {
-      await AsyncStorage.setItem(
-        'profile',
-        JSON.stringify({
-          fullName,
-          email,
-          phone,
-          department,
-          position,
-          joinDate: formatDate(joinDate),
-          faceImage,
-          faceRect,
-        }),
-      );
+      // ── 1. Save profile locally (offline-first) ──────────────────────────
+      const profilePayload = {
+        fullName,
+        email,
+        phone,
+        department,
+        position,
+        joinDate: formatDate(joinDate),
+        faceImage,
+        faceRect,
+      };
+      await AsyncStorage.setItem('profile', JSON.stringify(profilePayload));
       await AsyncStorage.setItem('profileSetupDone', 'true');
 
-      // TODO: POST to API (replace BASE_URL)
-      /*
-      const formData = new FormData();
-      formData.append('fullName', fullName);
-      formData.append('email', email);
-      formData.append('phone', phone);
-      formData.append('department', department);
-      formData.append('position', position);
-      formData.append('joinDate', formatDate(joinDate));
-      formData.append('faceImage', {
-        uri: faceImage.uri,
-        type: 'image/jpeg',
-        name: 'face.jpg',
-      });
-      const res = await fetch('BASE_URL/api/employees', {
-        method: 'POST',
-        body: formData,
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      const data = await res.json();
-      await AsyncStorage.setItem('employeeId', data.id);
-      */
+      // ── 2. Register employee with server (POST /api/employees) ───────────
+      try {
+        const formData = new FormData();
+        formData.append('fullName', fullName);
+        formData.append('email', email);
+        formData.append('phone', phone);
+        formData.append('department', department);
+        formData.append('position', position);
+        formData.append('joinDate', formatDate(joinDate));
+        // Attach face image — DO NOT set Content-Type manually
+        formData.append('faceImage', {
+          uri: faceImage.uri,
+          type: 'image/jpeg',
+          name: 'face.jpg',
+        } as any);
 
-      // After profile setup, proceed to Attendance check-in
+        const data = await registerEmployee(formData);
+        // Save server-assigned UUID for attendance marking
+        await AsyncStorage.setItem('employeeUuid', data.uuid);
+        console.log('[ProfileSetup] Employee registered, UUID:', data.uuid);
+      } catch (apiErr: any) {
+        if (typeof apiErr?.message === 'string' && apiErr.message.startsWith('CONFLICT:')) {
+          // Already registered — not a fatal error; user can still use the app
+          console.warn('[ProfileSetup] Conflict (duplicate email) — continuing:', apiErr.message);
+        } else {
+          // Network / server error — non-fatal (profile is already saved locally)
+          console.warn('[ProfileSetup] API error (non-fatal):', apiErr);
+          Alert.alert(
+            'Server Sync Failed',
+            'Your profile was saved locally. Check-in will work on this device. Sync will retry on next sign-in.',
+            [{ text: 'OK' }],
+          );
+        }
+      }
+
+      // ── 3. Navigate to Attendance ─────────────────────────────────────────
       navigation.replace('Attendance');
     } catch (e) {
-      Alert.alert('Error', 'Error saving profile.');
+      Alert.alert('Error', 'Error saving profile. Please try again.');
     }
     setLoading(false);
   };
@@ -248,12 +260,9 @@ export default function ProfileSetupScreen({ navigation }: any) {
           {/* Face Image Picker — Camera or Gallery */}
           <TouchableOpacity style={styles.imagePicker} onPress={handlePickImage} activeOpacity={0.7}>
             {faceImage ? (
-              <Image
+            <Image
                 source={{ uri: faceImage.uri }}
-                style={[
-                  styles.faceImage,
-                  { transform: [{ scaleX: faceImage.isCamera ? -1 : 1 }] },
-                ]}
+                style={styles.faceImage}
               />
             ) : (
               <View style={styles.imagePickerInner}>

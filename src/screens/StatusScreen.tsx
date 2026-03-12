@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -8,6 +8,7 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import { Colors, Fonts } from '@/constants/theme';
 import { getHeight, getWidth } from '@/hooks/use-responsive-sizing';
 import type { RootStackParamList } from '../navigation/types';
+import { markAttendance } from '@/services/api';
 
 type Nav = NativeStackNavigationProp<RootStackParamList, 'Status'>;
 type StatusRoute = RouteProp<RootStackParamList, 'Status'>;
@@ -16,16 +17,60 @@ export default function StatusScreen() {
   const navigation = useNavigation<Nav>();
   const route = useRoute<StatusRoute>();
   const [isProfileDone, setIsProfileDone] = useState(false);
+  const [apiCallDone, setApiCallDone] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
 
   const { matched, similarity } = route.params;
   const similarityPercent = Math.round(similarity * 100);
 
+  /** Returns today's date as 'YYYY-MM-DD' in local time */
+  function todayString(): string {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
   useEffect(() => {
-    const checkProfile = async () => {
+    const init = async () => {
+      // ── 1. Profile flag ──────────────────────────────────────────────────
       const value = await AsyncStorage.getItem('profileSetupDone');
       setIsProfileDone(value === 'true');
+
+      // ── 2. Fire attendance API only on a successful face match ──────────
+      if (matched) {
+        try {
+          const uuid = await AsyncStorage.getItem('employeeUuid');
+          if (!uuid) {
+            // No UUID stored — employee might not have synced yet
+            console.warn('[StatusScreen] No employeeUuid found — skipping API call');
+            // Still write the local attendance date so the daily gate works
+            await AsyncStorage.setItem('attendanceDate', todayString());
+            setApiCallDone(true);
+            return;
+          }
+
+          // POST /api/attendance
+          await markAttendance(uuid);
+          console.log('[StatusScreen] Attendance marked via API for UUID:', uuid);
+        } catch (err: any) {
+          if (err?.message === 'ALREADY_MARKED') {
+            // 409 — server already has today's attendance — not an error
+            console.log('[StatusScreen] Attendance already marked server-side (409)');
+          } else {
+            console.error('[StatusScreen] markAttendance API error:', err);
+            setApiError('Attendance synced locally. Server sync failed — it will retry.');
+          }
+        } finally {
+          // Always write the local date flag so the daily gate activates
+          await AsyncStorage.setItem('attendanceDate', todayString());
+          setApiCallDone(true);
+        }
+      }
     };
-    checkProfile();
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const now = new Date();
@@ -75,6 +120,20 @@ export default function StatusScreen() {
           <Text style={styles.subtitle}>
             Your check-in has been recorded and{'\n'}verified by the system.
           </Text>
+          {/* API sync error (non-blocking) */}
+          {apiCallDone && apiError && (
+            <View style={styles.apiErrorBanner}>
+              <Ionicons name="cloud-offline-outline" size={Math.round(0.041 * getWidth())} color="#92400E" />
+              <Text style={styles.apiErrorTxt}>{apiError}</Text>
+            </View>
+          )}
+          {/* Loading while API fires */}
+          {matched && !apiCallDone && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+              <ActivityIndicator size="small" color={Colors.light.buttonBg} />
+              <Text style={styles.subtitle}>Syncing with server…</Text>
+            </View>
+          )}
         </>
       ) : (
         <>
@@ -174,6 +233,25 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.light.background,
     alignItems: 'center',
+  },
+  // ── API error banner ──────────────────────────────────────────────────────
+  apiErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    paddingHorizontal: 0.041 * getWidth(),
+    paddingVertical: 0.012 * getHeight(),
+    marginTop: 0.012 * getHeight(),
+    width: 0.82 * getWidth(),
+  },
+  apiErrorTxt: {
+    flex: 1,
+    fontSize: 0.03 * getWidth(),
+    fontWeight: '500',
+    color: '#92400E',
+    fontFamily: Fonts.sans,
   },
   header: {
     width: '100%',

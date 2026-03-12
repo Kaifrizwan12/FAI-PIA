@@ -138,7 +138,7 @@ export default function ProfileScreen() {
           {profile.faceImage ? (
             <Image
               source={{ uri: profile.faceImage.uri }}
-              style={[styles.avatar, { transform: [{ scaleX: profile.faceImage.isCamera ? -1 : 1 }] }]}
+              style={styles.avatar}
             />
           ) : (
             <View style={styles.avatarPlaceholder}>
