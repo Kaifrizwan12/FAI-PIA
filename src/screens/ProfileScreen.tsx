@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, Pressable, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useNavigation } from '@react-navigation/native';
-import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
+import { launchCamera } from 'react-native-image-picker';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import FaceDetection from '@react-native-ml-kit/face-detection';
 
@@ -23,6 +23,8 @@ type ProfileData = {
 export default function ProfileScreen() {
   const navigation = useNavigation();
   const [profile, setProfile] = useState<ProfileData | null>(null);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [detectingFace, setDetectingFace] = useState(false);
 
   useEffect(() => {
     const loadProfile = async () => {
@@ -34,41 +36,55 @@ export default function ProfileScreen() {
     loadProfile();
   }, []);
 
-  // Update face image — camera or gallery, no mirroring
-  const handleUpdatePhoto = () => {
+  // Update face image — camera only
+  const handleUpdatePhoto = async () => {
     console.log('[ProfileScreen] handleUpdatePhoto pressed');
-    Alert.alert('Update Face Photo', 'Choose how to update your photo', [
-      {
-        text: 'Camera',
-        onPress: async () => {
-          const result = await launchCamera({
-            mediaType: 'photo',
-            quality: 1,
-            saveToPhotos: false,
-            cameraType: 'front',
-            includeBase64: false,
-          });
-          if (!result.didCancel && result.assets && result.assets.length > 0) {
-            updateProfileImage({ ...result.assets[0], isCamera: true });
-          }
-        },
-      },
-      {
-        text: 'Gallery',
-        onPress: async () => {
-          const result = await launchImageLibrary({
-            mediaType: 'photo',
-            quality: 1,
-            selectionLimit: 1,
-            includeBase64: false,
-          });
-          if (!result.didCancel && result.assets && result.assets.length > 0) {
-            updateProfileImage({ ...result.assets[0], isCamera: false });
-          }
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    try {
+      setDetectingFace(true);
+      const result = await launchCamera({
+        mediaType: 'photo',
+        quality: 1,
+        saveToPhotos: false,
+        cameraType: 'front',
+        includeBase64: false,
+      });
+      setDetectingFace(false);
+      
+      if (result.didCancel) {
+        console.log('[ProfileScreen] Camera cancelled by user');
+        return;
+      }
+      
+      if (result.errorCode) {
+        console.error('[ProfileScreen] Camera error:', result.errorMessage);
+        if (result.errorCode === 'permission') {
+          Alert.alert(
+            'Camera Permission Required',
+            'Please enable camera permission in device settings to update your profile photo.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert(
+            'Camera Error',
+            'Failed to access camera. Please try again or check device settings.',
+            [{ text: 'OK' }]
+          );
+        }
+        return;
+      }
+      
+      if (result.assets && result.assets.length > 0) {
+        updateProfileImage({ ...result.assets[0], isCamera: true });
+      }
+    } catch (error) {
+      console.error('[ProfileScreen] Unexpected camera error:', error);
+      setDetectingFace(false);
+      Alert.alert(
+        'Camera Error',
+        'An unexpected error occurred while accessing the camera.',
+        [{ text: 'OK' }]
+      );
+    }
   };
 
   const updateProfileImage = async (imageAsset: any) => {
@@ -94,13 +110,16 @@ export default function ProfileScreen() {
           faceRect: faceRect
         };
         setProfile(updatedProfile);
+        setFaceDetected(true);
         await AsyncStorage.setItem('profile', JSON.stringify(updatedProfile));
         Alert.alert('Success', 'Profile photo updated successfully.');
       } else {
+        setFaceDetected(false);
         Alert.alert('No Face Detected', 'Please select a photo where your face is clearly visible.');
       }
     } catch (e) {
       Alert.alert('Error', 'Failed to process face image.');
+      setFaceDetected(false);
     }
   };
 
@@ -157,6 +176,21 @@ export default function ProfileScreen() {
           <Ionicons name="camera-outline" size={Math.round(0.04 * getWidth())} color={Colors.light.buttonBg} />
           <Text style={styles.updatePhotoText}>Update Photo</Text>
         </Pressable>
+
+        {/* Face detection status badge - shown when processing or after update */}
+        {(detectingFace || faceDetected) && (
+          <View style={[styles.faceStatusBadge, !faceDetected && detectingFace && styles.faceStatusBadgeProcessing, !faceDetected && !detectingFace && styles.faceStatusBadgeError]}>
+            <Ionicons
+              name={detectingFace ? 'hourglass-outline' : faceDetected ? 'checkmark-circle' : 'close-circle'}
+              size={Math.round(0.041 * getWidth())}
+              color="#fff"
+              style={{ marginRight: 6 }}
+            />
+            <Text style={styles.faceStatusText}>
+              {detectingFace ? 'DETECTING…' : faceDetected ? 'FACE VERIFIED' : 'NO FACE FOUND'}
+            </Text>
+          </View>
+        )}
       </View>
 
       {/* Details Card */}
@@ -345,5 +379,30 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#F1F5F9',
+  },
+
+  /* Face detection status badge */
+  faceStatusBadge: {
+    marginTop: 0.016 * getHeight(),
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059668',
+    borderRadius: 0.024 * getWidth(),
+    paddingVertical: 0.008 * getHeight(),
+    paddingHorizontal: 0.031 * getWidth(),
+    justifyContent: 'center',
+    alignSelf: 'center',
+  },
+  faceStatusBadgeProcessing: {
+    backgroundColor: '#F59E0B',
+  },
+  faceStatusBadgeError: {
+    backgroundColor: '#DC2626',
+  },
+  faceStatusText: {
+    color: '#fff',
+    fontSize: 0.034 * getWidth(),
+    fontWeight: '600',
+    fontFamily: Fonts.sans,
   },
 });

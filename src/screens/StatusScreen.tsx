@@ -18,9 +18,10 @@ export default function StatusScreen() {
   const route = useRoute<StatusRoute>();
   const [isProfileDone, setIsProfileDone] = useState(false);
   const [apiCallDone, setApiCallDone] = useState(false);
+  const [apiSuccess, setApiSuccess] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
 
-  const { matched, similarity } = route.params;
+  const { matched, similarity, latitude, longitude } = route.params;
   const similarityPercent = Math.round(similarity * 100);
 
   /** Returns today's date as 'YYYY-MM-DD' in local time */
@@ -45,26 +46,32 @@ export default function StatusScreen() {
           if (!uuid) {
             // No UUID stored — employee might not have synced yet
             console.warn('[StatusScreen] No employeeUuid found — skipping API call');
-            // Still write the local attendance date so the daily gate works
-            await AsyncStorage.setItem('attendanceDate', todayString());
+            setApiError('Profile not synced with server. Please complete profile setup to sync with server.');
+            setApiSuccess(false);
             setApiCallDone(true);
             return;
           }
 
-          // POST /api/attendance
-          await markAttendance(uuid);
-          console.log('[StatusScreen] Attendance marked via API for UUID:', uuid);
+          // POST /api/attendance with location coordinates
+          await markAttendance(uuid, latitude, longitude);
+          console.log('[StatusScreen] Attendance marked via API for UUID:', uuid, 'Location:', { latitude, longitude });
+          setApiSuccess(true);
+          // Only set attendance date on successful API call
+          await AsyncStorage.setItem('attendanceDate', todayString());
         } catch (err: any) {
           if (err?.message === 'ALREADY_MARKED') {
-            // 409 — server already has today's attendance — not an error
+            // 409 — server already has today's attendance — treat as success
             console.log('[StatusScreen] Attendance already marked server-side (409)');
+            setApiSuccess(true);
+            // Set attendance date on 409 (already marked) as well
+            await AsyncStorage.setItem('attendanceDate', todayString());
           } else {
             console.error('[StatusScreen] markAttendance API error:', err);
             setApiError('Attendance synced locally. Server sync failed — it will retry.');
+            setApiSuccess(false);
+            // DO NOT set attendanceDate on failure — let user retry
           }
         } finally {
-          // Always write the local date flag so the daily gate activates
-          await AsyncStorage.setItem('attendanceDate', todayString());
           setApiCallDone(true);
         }
       }
@@ -103,10 +110,10 @@ export default function StatusScreen() {
       </View>
 
       {/* status icon */}
-      <View style={[styles.iconCircleOuter, !matched && styles.iconCircleOuterFail]}>
-        <View style={[styles.iconCircleInner, !matched && styles.iconCircleInnerFail]}>
+      <View style={[styles.iconCircleOuter, !(matched && apiCallDone && apiSuccess) && styles.iconCircleOuterFail]}>
+        <View style={[styles.iconCircleInner, !(matched && apiCallDone && apiSuccess) && styles.iconCircleInnerFail]}>
           <Ionicons
-            name={matched ? 'checkmark' : 'close'}
+            name={matched && apiCallDone && apiSuccess ? 'checkmark' : 'close'}
             size={0.09 * getWidth()}
             color="#fff"
           />
@@ -114,24 +121,30 @@ export default function StatusScreen() {
       </View>
 
       {/* status text */}
-      {matched ? (
+      {matched && apiCallDone && apiSuccess ? (
         <>
           <Text style={styles.title}>Attendance Marked{'\n'}Successfully</Text>
           <Text style={styles.subtitle}>
             Your check-in has been recorded and{'\n'}verified by the system.
           </Text>
-          {/* API sync error (non-blocking) */}
-          {apiCallDone && apiError && (
+        </>
+      ) : matched && !apiCallDone ? (
+        <>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
+            <ActivityIndicator size="small" color={Colors.light.buttonBg} />
+            <Text style={styles.subtitle}>Syncing with server…</Text>
+          </View>
+        </>
+      ) : matched && apiError ? (
+        <>
+          <Text style={[styles.title, styles.titleFail]}>Partial{'\n'}Success</Text>
+          <Text style={styles.subtitle}>
+            Face matched and record saved locally.{'\n'}Your check-in will sync when possible.
+          </Text>
+          {apiError && (
             <View style={styles.apiErrorBanner}>
               <Ionicons name="cloud-offline-outline" size={Math.round(0.041 * getWidth())} color="#92400E" />
               <Text style={styles.apiErrorTxt}>{apiError}</Text>
-            </View>
-          )}
-          {/* Loading while API fires */}
-          {matched && !apiCallDone && (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 }}>
-              <ActivityIndicator size="small" color={Colors.light.buttonBg} />
-              <Text style={styles.subtitle}>Syncing with server…</Text>
             </View>
           )}
         </>
@@ -195,26 +208,20 @@ export default function StatusScreen() {
             </View>
           </View>
         </View>
-
-        <View style={styles.divider} />
-
-        {/* location row */}
-        <View style={styles.row}>
-          <View style={styles.rowIcon}>
-            <Ionicons name="location-outline" size={Math.round(0.051 * getWidth())} color={Colors.light.buttonBg} />
-          </View>
-          <View>
-            <Text style={styles.rowLabel}>LOCATION VERIFIED</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 0.01 * getWidth() }}>
-              <Ionicons name="checkmark-circle" size={Math.round(0.041 * getWidth())} color="#059668" />
-              <Text style={styles.rowValueGreen}>Yes</Text>
-            </View>
-          </View>
-        </View>
       </View>
 
+      {/* location info - show captured coordinates */}
+      {latitude !== undefined && longitude !== undefined && (
+        <View style={styles.locationInfo}>
+          <Ionicons name="location-outline" size={Math.round(0.041 * getWidth())} color={Colors.light.buttonBg} />
+          <Text style={styles.locationText}>
+            {latitude.toFixed(4)}, {longitude.toFixed(4)}
+          </Text>
+        </View>
+      )}
+
       {/* bottom button */}
-      {matched ? (
+      {matched && apiCallDone && apiSuccess ? (
         <Pressable style={styles.doneBtn} onPress={() => navigation.reset({ index: 0, routes: [{ name: 'Home' }] })}>
           <Text style={styles.doneBtnTxt}>Done</Text>
         </Pressable>
@@ -386,6 +393,20 @@ const styles = StyleSheet.create({
   divider: {
     height: 1,
     backgroundColor: '#F1F5F9',
+  },
+
+  /* location info */
+  locationInfo: {
+    marginTop: 0.02 * getHeight(),
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 0.02 * getWidth(),
+    paddingHorizontal: 0.051 * getWidth(),
+  },
+  locationText: {
+    fontSize: 0.036 * getWidth(),
+    color: Colors.light.textSec,
+    fontFamily: Fonts.sans,
   },
 
   /* buttons */

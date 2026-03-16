@@ -34,13 +34,13 @@ export default function HomeScreen() {
     return unsubscribe;
   }, [navigation]);
 
-  // "Get Started" — if profile is done go to Attendance, else go to ProfileSetup
+  // "Get Started" — if profile is done go to Attendance, else go to CameraPermission
   const handleGetStarted = useCallback(async () => {
     const value = await AsyncStorage.getItem('profileSetupDone');
     if (value === 'true') {
       navigation.navigate('Attendance');
     } else {
-      navigation.navigate('ProfileSetup');
+      navigation.navigate('CameraPermission');
     }
   }, [navigation]);
 

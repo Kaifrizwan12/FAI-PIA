@@ -9,6 +9,7 @@ import {
   StyleSheet,
   Text,
   View,
+  PermissionsAndroid,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -17,11 +18,11 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import AntDesign from 'react-native-vector-icons/AntDesign';
 import FaceDetection from '@react-native-ml-kit/face-detection';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Geolocation from '@react-native-community/geolocation';
 import { compareFaces, isFaceMatch } from '@/services/face-embedding';
 
 import { Colors, Fonts } from '@/constants/theme';
 import { getHeight, getWidth } from '@/hooks/use-responsive-sizing';
-import { useGeolocation } from '@/hooks/use-geolocation';
 import type { RootStackParamList } from '../navigation/types';
 
 // ─── Time-window helpers ──────────────────────────────────────────────────────
@@ -72,12 +73,15 @@ export default function AttendanceScreen() {
   const [detecting, setDetecting] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [isProfileDone, setIsProfileDone] = useState(false);
+  const [locationPermissionDenied, setLocationPermissionDenied] = useState(false);
 
   // ── Gate states ─────────────────────────────────────────────────────────────
   /** True if current time is between 09:00–16:59 local */
   const [withinWindow, setWithinWindow] = useState(isWithinWindow());
   /** True if the user has already checked in today */
   const [alreadyCheckedIn, setAlreadyCheckedIn] = useState(false);
+  /** Current user location */
+  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   // ── Check profile ────────────────────────────────────────────────────────────
   useFocusEffect(
@@ -100,12 +104,66 @@ export default function AttendanceScreen() {
     return () => clearInterval(id);
   }, []);
 
-  const { location, errorMsg, isHaversineTrue } = useGeolocation();
-
   /* ---- permission helpers ---- */
   const grantPermission = useCallback(async () => {
     await requestPermission();
   }, [requestPermission]);
+
+  /* ---- Capture current location ---- */
+  const captureLocation = useCallback(async () => {
+    return new Promise<{ latitude: number; longitude: number } | null>((resolve) => {
+      if (Platform.OS === 'android') {
+        PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ).then((granted) => {
+          if (granted === PermissionsAndroid.RESULTS.GRANTED) {
+            Geolocation.getCurrentPosition(
+              (position) => {
+                const { latitude, longitude } = position.coords;
+                console.log('[AttendanceScreen] Location captured:', { latitude, longitude });
+                setCurrentLocation({ latitude, longitude });
+                resolve({ latitude, longitude });
+              },
+              (error) => {
+                console.warn('[AttendanceScreen] Location capture error:', error.message);
+                setLocationPermissionDenied(true);
+                resolve(null);
+              },
+              {
+                enableHighAccuracy: false,
+                timeout: 10000,
+                maximumAge: 60000,
+              },
+            );
+          } else {
+            console.log('[AttendanceScreen] Location permission denied on Android');
+            setLocationPermissionDenied(true);
+            resolve(null);
+          }
+        });
+      } else {
+        // iOS
+        Geolocation.getCurrentPosition(
+          (position) => {
+            const { latitude, longitude } = position.coords;
+            console.log('[AttendanceScreen] Location captured:', { latitude, longitude });
+            setCurrentLocation({ latitude, longitude });
+            resolve({ latitude, longitude });
+          },
+          (error) => {
+            console.warn('[AttendanceScreen] Location capture error:', error.message);
+            setLocationPermissionDenied(true);
+            resolve(null);
+          },
+          {
+            enableHighAccuracy: false,
+            timeout: 10000,
+            maximumAge: 60000,
+          },
+        );
+      }
+    });
+  }, [])
 
   /* ---- single capture (fires ONCE) ---- */
   const capture = useCallback(async () => {
@@ -233,14 +291,17 @@ export default function AttendanceScreen() {
       const matched = isFaceMatch(similarity);
       console.log('[AttendanceScreen] Comparison result similarity:', similarity, 'Matched:', matched);
 
-      navigation.replace('Status', { matched, similarity });
+      // Capture location before navigating
+      const location = await captureLocation();
+
+      navigation.replace('Status', { matched, similarity, latitude: location?.latitude, longitude: location?.longitude });
     } catch (e: any) {
       console.error('[AttendanceScreen] Face comparison error:', e);
       setMessage('Face comparison failed — please retry');
     } finally {
       setComparing(false);
     }
-  }, [faceDetected, navigation, payload, faceRect]);
+  }, [faceDetected, navigation, payload, faceRect, captureLocation]);
 
   /* ---------- RENDER ---------- */
 
@@ -322,20 +383,6 @@ export default function AttendanceScreen() {
         ) : (
           <View style={styles.backBtn} />
         )}
-      </View>
-      <View style={isHaversineTrue ? styles.approvedLoc : styles.rejectedLoc}>
-        <View
-          style={{
-            width: 0.026 * getWidth(),
-            height: 0.026 * getWidth(),
-            borderRadius: 0.015 * getWidth(),
-            backgroundColor: isHaversineTrue ? '#059668' : '#DC2626',
-            marginRight: 0.021 * getWidth(),
-          }}
-        />
-        <Text style={isHaversineTrue ? styles.approvedLocText : styles.rejectedLocText}>
-          Location {isHaversineTrue ? 'Verified' : 'Not Verified'}
-        </Text>
       </View>
 
       {/* camera card */}
@@ -426,22 +473,8 @@ export default function AttendanceScreen() {
           </>
         )}
 
-        {/* Within window but location not verified */}
-        {withinWindow && !isHaversineTrue && !payload && !capturing && (
-          <>
-            <View style={[styles.windowBanner, styles.windowBannerLoc]}>
-              <Ionicons name="location-outline" size={Math.round(0.051 * getWidth())} color="#991B1B" />
-              <Text style={[styles.windowBannerTxt, { color: '#991B1B' }]}>Must be within office premises to check in</Text>
-            </View>
-            <Pressable style={[styles.markBtn, styles.markBtnDisabled]} disabled>
-              <AntDesign name="camera" size={Math.round(0.051 * getWidth())} color="#fff" />
-              <Text style={styles.markBtnTxt}>Capture Attendance</Text>
-            </Pressable>
-          </>
-        )}
-
         {/* Ready to capture */}
-        {withinWindow && isHaversineTrue && !payload && !capturing && (
+        {withinWindow && !payload && !capturing && (
           <Pressable style={styles.markBtn} onPress={() => void capture()}>
             <AntDesign name="camera" size={Math.round(0.051 * getWidth())} color={Colors.light.background} />
             <Text style={styles.markBtnTxt}>Capture Attendance</Text>

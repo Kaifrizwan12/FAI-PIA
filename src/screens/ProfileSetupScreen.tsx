@@ -13,7 +13,7 @@ import {
   Platform,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { launchImageLibrary, launchCamera } from 'react-native-image-picker';
+import { launchCamera } from 'react-native-image-picker';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import AntDesign from 'react-native-vector-icons/AntDesign';
@@ -33,6 +33,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [faceImage, setFaceImage] = useState<any>(null);
   const [faceRect, setFaceRect] = useState<any>(null);
+  const [faceDetected, setFaceDetected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [detectingFace, setDetectingFace] = useState(false);
 
@@ -51,29 +52,50 @@ export default function ProfileSetupScreen({ navigation }: any) {
     }
   };
 
-  // Pick image from gallery — no mirroring issues with gallery
-  const pickFromGallery = async () => {
-    const result = await launchImageLibrary({
-      mediaType: 'photo',
-      quality: 1,
-      selectionLimit: 1,
-      includeBase64: false,
-    });
-    if (!result.didCancel && result.assets && result.assets.length > 0) {
-      processSelectedImage({ ...result.assets[0], isCamera: false });
-    }
-  };
-
+  // Capture from camera only
   const captureFromCamera = async () => {
-    const result = await launchCamera({
-      mediaType: 'photo',
-      quality: 1,
-      saveToPhotos: false,
-      cameraType: 'front',
-      includeBase64: false,
-    });
-    if (!result.didCancel && result.assets && result.assets.length > 0) {
-      processSelectedImage({ ...result.assets[0], isCamera: true });
+    try {
+      const result = await launchCamera({
+        mediaType: 'photo',
+        quality: 1,
+        saveToPhotos: false,
+        cameraType: 'front',
+        includeBase64: false,
+      });
+      
+      if (result.didCancel) {
+        console.log('[ProfileSetupScreen] Camera cancelled by user');
+        return;
+      }
+      
+      if (result.errorCode) {
+        console.error('[ProfileSetupScreen] Camera error:', result.errorMessage);
+        if (result.errorCode === 'permission') {
+          Alert.alert(
+            'Camera Permission Required',
+            'Please enable camera permission in device settings to capture your photo for profile setup.',
+            [{ text: 'OK' }]
+          );
+        } else {
+          Alert.alert(
+            'Camera Error',
+            'Failed to access camera. Please try again or check device settings.',
+            [{ text: 'OK' }]
+          );
+        }
+        return;
+      }
+      
+      if (result.assets && result.assets.length > 0) {
+        processSelectedImage({ ...result.assets[0], isCamera: true });
+      }
+    } catch (error) {
+      console.error('[ProfileSetupScreen] Unexpected camera error:', error);
+      Alert.alert(
+        'Camera Error',
+        'An unexpected error occurred while accessing the camera.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
@@ -84,6 +106,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
       const faces = await FaceDetection.detect(uri);
       if (faces.length > 0) {
         setFaceImage(asset);
+        setFaceDetected(true);
         const { frame } = faces[0];
         setFaceRect({
           x: Math.round(frame.left),
@@ -93,23 +116,22 @@ export default function ProfileSetupScreen({ navigation }: any) {
         });
       } else {
         setFaceImage(null);
+        setFaceDetected(false);
         setFaceRect(null);
         Alert.alert('No Face Detected', 'Please select a photo where your face is clearly visible.');
       }
     } catch (e) {
       Alert.alert('Error', 'Failed to process face image.');
+      setFaceImage(null);
+      setFaceDetected(false);
     } finally {
       setDetectingFace(false);
     }
   };
 
   // Show options to choose camera or gallery
-  const handlePickImage = () => {
-    Alert.alert('Select Face Image', 'Choose how to add your photo', [
-      { text: 'Camera', onPress: captureFromCamera },
-      { text: 'Gallery', onPress: pickFromGallery },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  const handlePickImage = async () => {
+    await captureFromCamera();
   };
 
   const handleSubmit = async () => {
@@ -257,20 +279,36 @@ export default function ProfileSetupScreen({ navigation }: any) {
             />
           )}
 
-          {/* Face Image Picker — Camera or Gallery */}
-          <TouchableOpacity style={styles.imagePicker} onPress={handlePickImage} activeOpacity={0.7}>
-            {faceImage ? (
-            <Image
-                source={{ uri: faceImage.uri }}
-                style={styles.faceImage}
-              />
-            ) : (
-              <View style={styles.imagePickerInner}>
-                <Ionicons name="camera-outline" size={0.08 * getWidth()} color={Colors.light.buttonBg} />
-                <Text style={styles.imagePickerText}>Tap to capture or select face image</Text>
+          {/* Face Image Picker — Camera Only */}
+          <View>
+            <TouchableOpacity style={styles.imagePicker} onPress={handlePickImage} activeOpacity={0.7}>
+              {faceImage ? (
+              <Image
+                  source={{ uri: faceImage.uri }}
+                  style={styles.faceImage}
+                />
+              ) : (
+                <View style={styles.imagePickerInner}>
+                  <Ionicons name="camera-outline" size={0.08 * getWidth()} color={Colors.light.buttonBg} />
+                  <Text style={styles.imagePickerText}>Tap to capture your face with camera</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+            {/* Face detection status badge */}
+            {faceImage && (
+              <View style={[styles.faceStatusBadge, !faceDetected && styles.faceStatusBadgeError]}>
+                <Ionicons
+                  name={faceDetected ? 'checkmark-circle' : 'close-circle'}
+                  size={Math.round(0.041 * getWidth())}
+                  color="#fff"
+                  style={{ marginRight: 6 }}
+                />
+                <Text style={styles.faceStatusText}>
+                  {detectingFace ? 'DETECTING…' : faceDetected ? 'FACE VERIFIED' : 'NO FACE FOUND'}
+                </Text>
               </View>
             )}
-          </TouchableOpacity>
+          </View>
         </View>
 
         {/* Submit Button */}
@@ -420,6 +458,27 @@ const styles = StyleSheet.create({
   submitBtnText: {
     color: '#fff',
     fontSize: 0.045 * getWidth(),
+    fontWeight: '600',
+    fontFamily: Fonts.sans,
+  },
+
+  /* Face detection status badge */
+  faceStatusBadge: {
+    marginTop: 0.012 * getHeight(),
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#059668',
+    borderRadius: 0.024 * getWidth(),
+    paddingVertical: 0.008 * getHeight(),
+    paddingHorizontal: 0.031 * getWidth(),
+    justifyContent: 'center',
+  },
+  faceStatusBadgeError: {
+    backgroundColor: '#DC2626',
+  },
+  faceStatusText: {
+    color: '#fff',
+    fontSize: 0.034 * getWidth(),
     fontWeight: '600',
     fontFamily: Fonts.sans,
   },

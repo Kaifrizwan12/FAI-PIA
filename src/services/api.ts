@@ -4,7 +4,7 @@
  * For a physical device on the same Wi-Fi, replace with your machine's LAN IP.
  */
 
-export const BASE_URL = 'http://192.168.137.236:5063';
+export const BASE_URL = 'https://miyoko-unmoated-margaret.ngrok-free.dev';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +24,8 @@ export type MarkAttendanceResponse = {
     uuid: string;
     markedAt: string;
     status: string;
+    latitude: number;
+    longitude: number;
 };
 
 export type ApiError = {
@@ -100,19 +102,28 @@ export async function registerEmployee(
 
 /**
  * POST /api/attendance  (application/json)
- * Mark attendance for the employee identified by UUID.
+ * Mark attendance for the employee identified by UUID with their location coordinates.
  * Call this only after on-device face match succeeds.
  */
 export async function markAttendance(
     uuid: string,
+    latitude?: number,
+    longitude?: number,
 ): Promise<MarkAttendanceResponse> {
     const url = `${BASE_URL}/api/attendance`;
-    console.log(`[API] Req -> POST ${url} | body:`, { uuid });
+    const body: any = { uuid };
+    
+    if (latitude !== undefined && longitude !== undefined) {
+        body.latitude = latitude;
+        body.longitude = longitude;
+    }
+    
+    console.log(`[API] Req -> POST ${url} | body:`, body);
     
     const res = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ uuid }),
+        body: JSON.stringify(body),
     });
     
     console.log(`[API] Res <- POST ${url} [Status: ${res.status}]`);
