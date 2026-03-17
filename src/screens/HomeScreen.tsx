@@ -37,7 +37,17 @@ export default function HomeScreen() {
   // "Get Started" — if profile is done go to Attendance, else go to CameraPermission
   const handleGetStarted = useCallback(async () => {
     const value = await AsyncStorage.getItem('profileSetupDone');
-    if (value === 'true') {
+    const uuid = await AsyncStorage.getItem('employeeUuid');
+    
+    // Recovery for corrupted state (profile done but failed registering UUID)
+    if (value === 'true' && !uuid) {
+      console.warn('[HomeScreen] Corrupted state detected: profile is done but no UUID. Resetting.');
+      await AsyncStorage.removeItem('profileSetupDone');
+      navigation.navigate('CameraPermission');
+      return;
+    }
+
+    if (value === 'true' && uuid) {
       navigation.navigate('Attendance');
     } else {
       navigation.navigate('CameraPermission');

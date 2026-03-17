@@ -141,7 +141,7 @@ export default function ProfileSetupScreen({ navigation }: any) {
     }
     setLoading(true);
     try {
-      // ── 1. Save profile locally (offline-first) ──────────────────────────
+      // ── 1. Create profile payload ──────────────────────────────────────────
       const profilePayload = {
         fullName,
         email,
@@ -152,8 +152,6 @@ export default function ProfileSetupScreen({ navigation }: any) {
         faceImage,
         faceRect,
       };
-      await AsyncStorage.setItem('profile', JSON.stringify(profilePayload));
-      await AsyncStorage.setItem('profileSetupDone', 'true');
 
       // ── 2. Register employee with server (POST /api/employees) ───────────
       try {
@@ -165,28 +163,48 @@ export default function ProfileSetupScreen({ navigation }: any) {
         formData.append('position', position);
         formData.append('joinDate', formatDate(joinDate));
         // Attach face image — DO NOT set Content-Type manually
-        formData.append('faceImage', {
+        const faceImageObj = {
           uri: faceImage.uri,
           type: 'image/jpeg',
           name: 'face.jpg',
-        } as any);
+        };
+        formData.append('faceImage', faceImageObj as any);
+
+        // Debug: Log all FormData fields
+        console.log('[ProfileSetup] FormData fields:');
+        console.log('fullName:', fullName);
+        console.log('email:', email);
+        console.log('phone:', phone);
+        console.log('department:', department);
+        console.log('position:', position);
+        console.log('joinDate:', formatDate(joinDate));
+        console.log('faceImage:', faceImageObj);
 
         const data = await registerEmployee(formData);
         // Save server-assigned UUID for attendance marking
         await AsyncStorage.setItem('employeeUuid', data.uuid);
         console.log('[ProfileSetup] Employee registered, UUID:', data.uuid);
+
+        // ── 3. Save profile locally ONLY after server accepts ────────────────
+        await AsyncStorage.setItem('profile', JSON.stringify(profilePayload));
+        await AsyncStorage.setItem('profileSetupDone', 'true');
       } catch (apiErr: any) {
         if (typeof apiErr?.message === 'string' && apiErr.message.startsWith('CONFLICT:')) {
           // Already registered — not a fatal error; user can still use the app
           console.warn('[ProfileSetup] Conflict (duplicate email) — continuing:', apiErr.message);
+          
+          await AsyncStorage.setItem('profile', JSON.stringify(profilePayload));
+          await AsyncStorage.setItem('profileSetupDone', 'true');
         } else {
-          // Network / server error — non-fatal (profile is already saved locally)
-          console.warn('[ProfileSetup] API error (non-fatal):', apiErr);
+          // Network/server error or fetch hang — show error and stop loading
+          console.warn('[ProfileSetup] API error (fatal):', apiErr);
+          const errMessage = apiErr instanceof Error ? apiErr.message : 'Unknown error occurred.';
           Alert.alert(
-            'Server Sync Failed',
-            'Your profile was saved locally. Check-in will work on this device. Sync will retry on next sign-in.',
+            'Server Error',
+            `Could not register employee.\n\nDetails: ${errMessage}\n\nPlease check server logs or ensure the form fields are valid.`,
             [{ text: 'OK' }],
           );
+          return; // Do not proceed to Attendance screen
         }
       }
 
@@ -194,8 +212,9 @@ export default function ProfileSetupScreen({ navigation }: any) {
       navigation.replace('Attendance');
     } catch (e) {
       Alert.alert('Error', 'Error saving profile. Please try again.');
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (
